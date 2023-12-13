@@ -1,0 +1,208 @@
+---
+title: "Final Project"
+author: "Zhan Gu"
+date: "2023-12-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, results = FALSE, message = FALSE, warning = FALSE)
+```
+
+## Abstract
+This project explores a synthetic healthcare dataset to build a multilevel multinomial model that predicts the results of a medical test from a wide selection of patient-related information. Due to the limitations of synthetic data, the model was not statistically significant, but the methods applied in this project could still be used in a similar context.
+
+## Introduction
+The healthcare dataset used in this project is a synthetic dataset designed to mirror real-world healthcare scenarios. It comprises 10000 observations and key variables related to this project are listed below:
+
+Name: name of the patient associated with the healthcare record.
+
+Age: age of the patient at the time of admission, expressed in years.
+
+Gender: gender of the patient, either "Male" or "Female."
+
+Blood Type: patient's blood type, which can be one of the common blood types (e.g., "A+", "O-", etc.).
+
+Medical Condition: the primary medical condition or diagnosis associated with the patient, such as "Diabetes," "Hypertension," "Asthma," and more.
+
+Hospital: the healthcare facility or hospital where the patient was admitted.
+
+Medication: the medication prescribed or administered to the patient during their admission. Examples include "Aspirin," "Ibuprofen," "Penicillin," "Paracetamol," and "Lipitor."
+
+Test Results: the results of a medical test conducted during the patient's admission. Possible values include "Normal," "Abnormal," or "Inconclusive," indicating the outcome of the test.
+
+Our primary aim is to build a predictive model that predicts test results based on these variables.
+
+## Method
+First we conducted some data cleaning, particularly converting categorical data to factors and grouping ages. In the subsequent exploratory data analysis, we wanted to look at the distribution of various medical conditions across different demographic groups, including age, gender, and blood type. This is to examine the chance of medical condition confounding the association between test results and demographic groups. 
+
+We used stacked bar plots to observe the distribution of conditions among these demographics, which indicated a relatively uniform distribution of medical conditions across all demographic categories. Chi-square tests were conducted to assess the statistical significance of these observations, yielding high p-values over 0.5. This suggests that medical conditions are evenly distributed regardless of age, gender, or blood type in the dataset and medical condition will not confound the association between test results and demographic groups.
+
+Then we build our predictive model and use 7000 observations for training and 3000 observationns for testing. Here we choose our model to be a multilevel multinomial model because the dependent variable "Test Results" is categorical with three levels - Normal, Abnormal, Inconclusive.
+
+Fixed effects include:
+
+Medication: to see how different medications relate to test results.
+
+Medical Condition: to control for the type of medical condition being treated.
+
+Age Group, Gender, Blood Type: to account for patient demographics.
+
+Random effects include:
+
+Hospital: To account for variations between different hospitals, considering that healthcare practices might vary across institutions.
+
+Finally we check the accuracy of the model and compare it with the null model. The null model includes intercept only and predict test results based solely on the overall distribution of the results.
+
+```{r}
+healthcare_data <- read.csv("healthcare_dataset.csv")
+#check for missing value
+sum(is.na(healthcare_data)) 
+#convert categorical variables
+healthcare_data$Gender <- as.factor(healthcare_data$Gender)
+healthcare_data$Blood.Type <- as.factor(healthcare_data$Blood.Type)
+healthcare_data$Medical.Condition <- as.factor(healthcare_data$Medical.Condition)
+healthcare_data$Hospital <- as.factor(healthcare_data$Hospital)
+healthcare_data$Test.Results <- as.factor(healthcare_data$Test.Results)
+#age groups
+range(healthcare_data$Age)
+healthcare_data$Age.Group <- cut(healthcare_data$Age, 
+                                 breaks = c(18, 30, 45, 60, 75, 85),
+                                 labels = c("18-30", "31-45", "46-60", "61-75", "76-85"),
+                                 include.lowest = TRUE)
+
+library(brms)
+library(caret)
+library(Metrics)
+set.seed(678)
+splitIndex <- createDataPartition(healthcare_data$Test.Results, p = 0.7, list = FALSE)
+train_data <- healthcare_data[splitIndex, ]
+test_data <- healthcare_data[-splitIndex, ]
+
+model <- brm(
+  Test.Results ~ Medication + Medical.Condition + Age.Group + Gender + Blood.Type + (1 | Hospital),
+  data = train_data,
+  family = categorical(),
+  chains = 2,
+  iter = 400,
+  warmup = 200
+)
+summary(model)
+
+set.seed(678)
+predicted_results <- predict(model, newdata = test_data, re_formula = NA)
+predicted_category <- apply(predicted_results, 1, which.max)
+predicted_category <- factor(predicted_category, labels = levels(healthcare_data$Test.Results))
+confusionMatrix <- table(Predicted = predicted_category, Actual = test_data$Test.Results)
+print(confusionMatrix)
+accuracy <- sum(diag(confusionMatrix)) / sum(confusionMatrix)
+print(accuracy)
+
+null_intercept <- brm(
+  Test.Results ~ 1,
+  data = train_data,
+  family = categorical(),
+  chains = 2,
+  iter = 400,
+  warmup = 200
+)
+summary(null_intercept)
+
+set.seed(678)
+predicted_results_null <- predict(null_intercept, newdata = test_data, re_formula = NA)
+predicted_category_null <- apply(predicted_results_null, 1, which.max)
+predicted_category_null <- factor(predicted_category_null, labels = levels(healthcare_data$Test.Results))
+confusionMatrix_null <- table(Predicted = predicted_category_null, Actual = test_data$Test.Results)
+print(confusionMatrix_null)
+accuracy_null <- sum(diag(confusionMatrix_null)) / sum(confusionMatrix_null)
+print(accuracy_null)
+```
+
+## Result
+```{r}
+library(reshape2)
+confusion_matrix <- matrix(c(486, 483, 459, 276, 244, 252, 274, 256, 269), 
+                           nrow = 3, 
+                           byrow = TRUE,
+                           dimnames = list(Predicted = c("Abnormal", "Inconclusive", "Normal"),
+                                           Actual = c("Abnormal", "Inconclusive", "Normal")))
+confusion_long <- melt(as.table(confusion_matrix))
+ggplot(confusion_long, aes(x = Actual, y = Predicted, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = value), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "white") +
+  labs(title = "Confusion Matrix of Multilevel Model", x = "Actual Category", y = "Predicted Category") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  annotate("text", x = Inf, y = Inf, label = "Accuracy = 0.333", hjust = 1.1, vjust = 2, fontface = "italic", color = "black")
+
+confusion_matrix_null <- matrix(c(530, 509, 522, 270, 264, 229, 236, 210, 229), 
+                           nrow = 3, 
+                           byrow = TRUE,
+                           dimnames = list(Predicted = c("Abnormal", "Inconclusive", "Normal"),
+                                           Actual = c("Abnormal", "Inconclusive", "Normal")))
+confusion_long_null <- melt(as.table(confusion_matrix_null))
+ggplot(confusion_long_null, aes(x = Actual, y = Predicted, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = value), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "white") +
+  labs(title = "Confusion Matrix of Null Model", x = "Actual Category", y = "Predicted Category") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  annotate("text", x = Inf, y = Inf, label = "Accuracy = 0.341", hjust = 1.1, vjust = 2, fontface = "italic", color = "black")
+```
+
+## Discussion
+Most coefficients in our predictive model are not statistically significant, and the model accuracy is lower than the null model. This outcome is most likely due to the nature of the dataset. Synthetic data were generated by randomly assigning values to the variables and from our EDA, it seems that the values are uniformly distributed. As a result, there is no actual relationship between the variables, unlike real data where correlations exist. Here the outcome is only a dummy variable and thus the predictors in our model are simply irrelevant.
+
+Due to the limitations of time and access to real data, this project can only explore multilevel models in healthcare data analysis to this extent. Despite the lack of statistically significant outcomes, the applied methods could still be of use in contexts where more comprehensive, real-world data are available. 
+
+## Appendix
+```{r}
+#EDA
+summary(healthcare_data)
+table(healthcare_data$Age.Group)
+table(healthcare_data$Gender)
+table(healthcare_data$Blood.Type)
+table(healthcare_data$Medical.Condition)
+
+library(ggplot2)
+#Age Group Distribution
+ggplot(healthcare_data, aes(x = Age.Group)) + 
+  geom_bar() + 
+  labs(title = "Age Group Distribution")
+#Gender Distribution
+ggplot(healthcare_data, aes(x = Gender)) + 
+  geom_bar() + 
+  labs(title = "Gender Distribution")
+#Blood Type Distribution
+ggplot(healthcare_data, aes(x = Blood.Type)) + 
+  geom_bar() + 
+  labs(title = "Blood Type Distribution")
+#Medical Condition Distribution
+ggplot(healthcare_data, aes(x = Medical.Condition)) + 
+  geom_bar() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Medical Condition Distribution")
+
+#Medical Conditions by Age Group
+ggplot(healthcare_data, aes(fill = Medical.Condition, x = Age.Group)) + 
+  geom_bar(position = "fill") +
+  labs(title = "Medical Conditions by Age Group", x = "Age Group", y = "Proportion")
+age_medical_condition_table <- table(healthcare_data$Age.Group, healthcare_data$Medical.Condition)
+chisq.test(age_medical_condition_table)
+
+#Medical Conditions by Gender
+ggplot(healthcare_data, aes(fill = Medical.Condition, x = Gender)) + 
+  geom_bar(position = "fill") +
+  labs(title = "Medical Conditions by Gender", x = "Gender", y = "Proportion")
+gender_medical_condition_table <- table(healthcare_data$Gender, healthcare_data$Medical.Condition)
+chisq.test(gender_medical_condition_table)
+
+#Medical Conditions by Blood Type
+ggplot(healthcare_data, aes(fill = Medical.Condition, x = Blood.Type)) + 
+  geom_bar(position = "fill") +
+  labs(title = "Medical Conditions by Gender", x = "Blood Type", y = "Proportion")
+bloodtype_medical_condition_table <- table(healthcare_data$Blood.Type, healthcare_data$Medical.Condition)
+chisq.test(bloodtype_medical_condition_table)
+```
